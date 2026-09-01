@@ -792,6 +792,16 @@ public class TerrainGenerator {
                             scalarField.temperature[idx] = 9999.0; // Empty top
                         }
                     }
+                } else if (action == 3) {
+                    // Tunnel: Hollow out a space for the road, leaving ground below and above intact
+                    for (int y = Math.max(0, cy); y <= Math.min(sizeY - 1, cy + 2); y++) {
+                        int idx = x + y * sizeX + z * sizeX * sizeY;
+                        scalarField.temperature[idx] = 9999.0; // Empty for road clearance
+                    }
+                    if (cy > 0) {
+                        int idx = x + (cy - 1) * sizeX + z * sizeX * sizeY;
+                        scalarField.temperature[idx] = -9999.0; // Ensure solid ground under road
+                    }
                 }
             }
         }

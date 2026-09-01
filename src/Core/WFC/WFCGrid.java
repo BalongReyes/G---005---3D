@@ -227,6 +227,13 @@ public class WFCGrid {
             }
             
             if (!canConnectToAnything) {
+                if (neighbor.possibleModules.size() == 1) {
+                    System.out.println("FATAL CONTRADICTION: Cell " + neighbor.x + "," + neighbor.y + "," + neighbor.z + 
+                        " lost its LAST possibility: " + neighMod.name + " because it couldn't connect to current cell " + current.x + "," + current.y + "," + current.z + " in direction " + direction);
+                    System.out.print("Current cell possible modules: ");
+                    for (WFCModule m : current.possibleModules) System.out.print(m.name + " ");
+                    System.out.println("\n");
+                }
                 neighbor.possibleModules.remove(i);
                 changed = true;
             }

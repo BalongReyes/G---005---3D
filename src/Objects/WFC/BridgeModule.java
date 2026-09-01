@@ -21,13 +21,18 @@ public class BridgeModule extends WFCModule {
 
     private static final double DECK_THICKNESS_FRAC = 0.08;
     private static final double RAIL_HEIGHT_FRAC = 0.25;
+    private static final double RAIL_THICKNESS_FRAC = 0.05;
     private static final double PYLON_WIDTH_FRAC = 0.12;
 
     private final int connectionMask;
+    private final Core.WFC.RoadNetwork roadNetwork;
 
-    public BridgeModule(int connectionMask) {
+    public BridgeModule(int connectionMask, Core.WFC.RoadNetwork roadNetwork) {
         super(SocketType.ROAD, "Bridge_" + connectionMask,
-                buildProvided(connectionMask), buildAccepted(connectionMask), DECK_COLOR, 1.0);
+                buildProvided(connectionMask),
+                buildAccepted(connectionMask),
+                new Color(100, 100, 105), 1.0);
+        this.roadNetwork = roadNetwork;
         this.connectionMask = connectionMask;
     }
 
@@ -71,6 +76,29 @@ public class BridgeModule extends WFCModule {
         return false;
     }
 
+    private double getWorldY(double gridY, double size) {
+        double startY = -((Settings.WorldSettings.GRID_SIZE_Y - 1) * size) / 2.0;
+        return startY + gridY * size + size / 2.0;
+    }
+
+    private double getSlopeY(double x, double z, double cx, double cz, double s, double center_y, double px_y, double nx_y, double pz_y, double nz_y, boolean isAnchor) {
+        if (isAnchor) return center_y;
+        
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_PX) && has(connectionMask, Core.WFC.RoadNetwork.DIR_NX) && 
+            !has(connectionMask, Core.WFC.RoadNetwork.DIR_PZ) && !has(connectionMask, Core.WFC.RoadNetwork.DIR_NZ)) {
+            double dx = (x - cx) / s;
+            if (dx > 0) return center_y + (px_y - center_y) / 2.0 * dx;
+            else return center_y + (center_y - nx_y) / 2.0 * dx;
+        }
+        if (!has(connectionMask, Core.WFC.RoadNetwork.DIR_PX) && !has(connectionMask, Core.WFC.RoadNetwork.DIR_NX) && 
+            has(connectionMask, Core.WFC.RoadNetwork.DIR_PZ) && has(connectionMask, Core.WFC.RoadNetwork.DIR_NZ)) {
+            double dz = (z - cz) / s;
+            if (dz > 0) return center_y + (pz_y - center_y) / 2.0 * dz;
+            else return center_y + (center_y - nz_y) / 2.0 * dz;
+        }
+        return center_y;
+    }
+
     @Override
     public void generateMesh(double cx, double cy, double cz, double size,
             List<Vertex> verts, List<Data.Face> faces, Core.World.ScalarField grid, double isoLevel) {
@@ -88,33 +116,135 @@ public class BridgeModule extends WFCModule {
         addDeckAndRails(cx, cy, cz, size, spansX, verts, faces);
     }
 
-    private void addDeckAndRails(double cx, double cy, double cz, double size, boolean spansX,
+    private void addDeckAndRails(double cx, double cy, double cz, double size, boolean spansX_ignored,
             List<Vertex> verts, List<Data.Face> faces) {
 
+
         double s = size / 2.0;
-        double deckThickness = size * DECK_THICKNESS_FRAC;
-        double topY = cy;
-        double bottomY = cy - deckThickness;
+        double startX = -((Settings.WorldSettings.GRID_SIZE_X - 1) * size) / 2.0;
+        double startZ = -((Settings.WorldSettings.GRID_SIZE_Z - 1) * size) / 2.0;
+        int gx = (int) Math.round((cx - startX - s) / size);
+        int gz = (int) Math.round((cz - startZ - s) / size);
+        
+        double center_y = cy;
+        double px_y = cy;
+        double nx_y = cy;
+        double pz_y = cy;
+        double nz_y = cy;
+        boolean isAnchor = true;
+        
+        if (roadNetwork != null) {
+            center_y = getWorldY(roadNetwork.getBridgeDeckHeight(gx, gz), size);
+            px_y = getWorldY(roadNetwork.getBridgeDeckHeight(gx + 1, gz), size);
+            nx_y = getWorldY(roadNetwork.getBridgeDeckHeight(gx - 1, gz), size);
+            pz_y = getWorldY(roadNetwork.getBridgeDeckHeight(gx, gz + 1), size);
+            nz_y = getWorldY(roadNetwork.getBridgeDeckHeight(gx, gz - 1), size);
+            isAnchor = (connectionMask != 3 && connectionMask != 12);
+        }
 
-        addBox(cx, bottomY, cz, topY, s, s, DECK_COLOR, verts, faces);
+        double w = size * 0.35; // match RoadModule half-width
+        double topOffset = 0;
+        double bottomOffset = -size * DECK_THICKNESS_FRAC;
+        double railTopOffset = size * RAIL_HEIGHT_FRAC;
+        double railThickness = size * 0.05; // Was RAIL_THICKNESS_FRAC which is not defined here
+        
+        String yq_dummy = "";
 
-        // Railings along the two long edges only, running the span
-        // direction - a straight-X bridge gets rails on +Z/-Z and vice versa.
-        double railHeight = size * RAIL_HEIGHT_FRAC;
-        double railThickness = size * 0.03;
-        if (spansX) {
-            addBox(cx, topY, cz - s + railThickness, topY + railHeight, s, railThickness / 2, RAIL_COLOR, verts, faces);
-            addBox(cx, topY, cz + s - railThickness, topY + railHeight, s, railThickness / 2, RAIL_COLOR, verts, faces);
-        } else {
-            addBox(cx - s + railThickness, topY, cz, topY + railHeight, railThickness / 2, s, RAIL_COLOR, verts, faces);
-            addBox(cx + s - railThickness, topY, cz, topY + railHeight, railThickness / 2, s, RAIL_COLOR, verts, faces);
+        addYQuad(cx - w, cx + w, cz - w, cz + w, topOffset, true, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        addYQuad(cx - w, cx + w, cz - w, cz + w, bottomOffset, false, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_PX)) {
+            addYQuad(cx + w, cx + s, cz - w, cz + w, topOffset, true, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addYQuad(cx + w, cx + s, cz - w, cz + w, bottomOffset, false, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz + w, bottomOffset, topOffset, 2, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz + w, bottomOffset, topOffset, 3, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            
+            addYQuad(cx + w, cx + s, cz - w, cz - w + railThickness, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz - w + railThickness, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz - w + railThickness, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz - w + railThickness, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz - w, cz - w + railThickness, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx + w, cx + s, cz + w - railThickness, cz + w, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz + w - railThickness, cz + w, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz + w - railThickness, cz + w, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz + w - railThickness, cz + w, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w, cx + s, cz + w - railThickness, cz + w, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_NX)) {
+            addYQuad(cx - s, cx - w, cz - w, cz + w, topOffset, true, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addYQuad(cx - s, cx - w, cz - w, cz + w, bottomOffset, false, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz + w, bottomOffset, topOffset, 2, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz + w, bottomOffset, topOffset, 3, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx - s, cx - w, cz - w, cz - w + railThickness, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz - w + railThickness, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz - w + railThickness, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz - w + railThickness, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz - w, cz - w + railThickness, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx - s, cx - w, cz + w - railThickness, cz + w, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz + w - railThickness, cz + w, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz + w - railThickness, cz + w, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz + w - railThickness, cz + w, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - s, cx - w, cz + w - railThickness, cz + w, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_PZ)) {
+            addYQuad(cx - w, cx + w, cz + w, cz + s, topOffset, true, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addYQuad(cx - w, cx + w, cz + w, cz + s, bottomOffset, false, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx + w, cz + w, cz + s, bottomOffset, topOffset, 0, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx + w, cz + w, cz + s, bottomOffset, topOffset, 1, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            
+            addYQuad(cx - w, cx - w + railThickness, cz + w, cz + s, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz + w, cz + s, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz + w, cz + s, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz + w, cz + s, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz + w, cz + s, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx + w - railThickness, cx + w, cz + w, cz + s, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz + w, cz + s, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz + w, cz + s, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz + w, cz + s, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz + w, cz + s, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_NZ)) {
+            addYQuad(cx - w, cx + w, cz - s, cz - w, topOffset, true, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addYQuad(cx - w, cx + w, cz - s, cz - w, bottomOffset, false, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx + w, cz - s, cz - w, bottomOffset, topOffset, 0, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx + w, cz - s, cz - w, bottomOffset, topOffset, 1, DECK_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx - w, cx - w + railThickness, cz - s, cz - w, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz - s, cz - w, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz - s, cz - w, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz - s, cz - w, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx - w, cx - w + railThickness, cz - s, cz - w, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+
+            addYQuad(cx + w - railThickness, cx + w, cz - s, cz - w, railTopOffset, true, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz - s, cz - w, topOffset, railTopOffset, 0, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz - s, cz - w, topOffset, railTopOffset, 1, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz - s, cz - w, topOffset, railTopOffset, 2, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+            addSideQuad(cx + w - railThickness, cx + w, cz - s, cz - w, topOffset, railTopOffset, 3, RAIL_COLOR, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        
+        Color stripeColor = new Color(220, 200, 40);
+        double stripeW = size * 0.05;
+        double stTop = topOffset + 0.05;
+
+        addYQuad(cx - stripeW, cx + stripeW, cz - stripeW, cz + stripeW, stTop, true, stripeColor, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_PX)) {
+            addYQuad(cx + stripeW, cx + s, cz - stripeW, cz + stripeW, stTop, true, stripeColor, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_NX)) {
+            addYQuad(cx - s, cx - stripeW, cz - stripeW, cz + stripeW, stTop, true, stripeColor, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_PZ)) {
+            addYQuad(cx - stripeW, cx + stripeW, cz + stripeW, cz + s, stTop, true, stripeColor, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        }
+        if (has(connectionMask, Core.WFC.RoadNetwork.DIR_NZ)) {
+            addYQuad(cx - stripeW, cx + stripeW, cz - s, cz - stripeW, stTop, true, stripeColor, verts, faces, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
         }
     }
 
-    // Grows a single support pylon straight down from the deck to the
-    // actual solid seabed/ground, so a span over deep water still gets a
-    // visible pier rather than a deck that appears to float. Search depth is
-    // capped so a very deep trench doesn't grow an unbounded pylon.
     private void addPylon(double cx, double cy, double cz, double size,
             Core.World.ScalarField grid, double isoLevel, List<Vertex> verts, List<Data.Face> faces) {
 
@@ -129,46 +259,86 @@ public class BridgeModule extends WFCModule {
             }
         }
 
-        double pylonWidth = size * PYLON_WIDTH_FRAC;
-        addBox(cx, floorY, cz, cy - size * DECK_THICKNESS_FRAC, pylonWidth / 2, pylonWidth / 2,
-                PYLON_COLOR, verts, faces);
+
+        double pylonW = size * PYLON_WIDTH_FRAC / 2.0;
+        double topOffset = -size * DECK_THICKNESS_FRAC;
+        double bottomOffset = floorY - cy;
+        
+        double s = size/2.0;
+        String yq = ", verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);";
+
+        addYQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, topOffset, true, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
+        addYQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, bottomOffset, false, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
+        addSideQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, bottomOffset, topOffset, 0, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
+        addSideQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, bottomOffset, topOffset, 1, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
+        addSideQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, bottomOffset, topOffset, 2, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
+        addSideQuad(cx - pylonW, cx + pylonW, cz - pylonW, cz + pylonW, bottomOffset, topOffset, 3, PYLON_COLOR, verts, faces, cx, cz, s, cy, cy, cy, cy, cy, true);
     }
 
-    // Axis-aligned box from bottomY to topY, half-extents hx/hz.
-    private void addBox(double cx, double bottomY, double cz, double topY, double hx, double hz,
-            Color boxColor, List<Vertex> verts, List<Data.Face> faces) {
+    private void addYQuad(double minX, double maxX, double minZ, double maxZ, double yOffset, boolean isTop, Color c, List<Vertex> verts, List<Data.Face> faces,
+                          double cx, double cz, double s, double center_y, double px_y, double nx_y, double pz_y, double nz_y, boolean isAnchor) {
+        
+        double y00 = getSlopeY(minX, minZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor) + yOffset;
+        double y10 = getSlopeY(maxX, minZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor) + yOffset;
+        double y11 = getSlopeY(maxX, maxZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor) + yOffset;
+        double y01 = getSlopeY(minX, maxZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor) + yOffset;
+        
+        int idx = verts.size();
+        verts.add(new Vertex(minX, y00, minZ)); // 0
+        verts.add(new Vertex(maxX, y10, minZ)); // 1
+        verts.add(new Vertex(maxX, y11, maxZ)); // 2
+        verts.add(new Vertex(minX, y01, maxZ)); // 3
+        for (int i = 0; i < 4; i++) setColor(verts.get(idx + i), c);
+        
+        int[] f = isTop ? new int[]{0, 3, 2, 1} : new int[]{0, 1, 2, 3};
+        
+        Data.Edge e1 = new Data.Edge(idx + f[0], idx + f[1]);
+        Data.Edge e2 = new Data.Edge(idx + f[1], idx + f[2]);
+        Data.Edge e3 = new Data.Edge(idx + f[2], idx + f[3]);
+        Data.Edge e4 = new Data.Edge(idx + f[3], idx + f[0]);
+        faces.add(new Data.Face(new Data.Edge[] { e1, e2, e3, e4 }, c));
+    }
+
+    private void addSideQuad(double minX, double maxX, double minZ, double maxZ, double bottomOffset, double topOffset, int side, Color c, List<Vertex> verts, List<Data.Face> faces,
+                             double cx, double cz, double s, double center_y, double px_y, double nx_y, double pz_y, double nz_y, boolean isAnchor) {
+        
+        double y00 = getSlopeY(minX, minZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        double y10 = getSlopeY(maxX, minZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        double y11 = getSlopeY(maxX, maxZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
+        double y01 = getSlopeY(minX, maxZ, cx, cz, s, center_y, px_y, nx_y, pz_y, nz_y, isAnchor);
 
         int idx = verts.size();
-        double[][] corners = {
-                { cx - hx, bottomY, cz - hz }, { cx + hx, bottomY, cz - hz },
-                { cx + hx, bottomY, cz + hz }, { cx - hx, bottomY, cz + hz },
-                { cx - hx, topY, cz - hz }, { cx + hx, topY, cz - hz },
-                { cx + hx, topY, cz + hz }, { cx - hx, topY, cz + hz }
-        };
-        for (double[] c : corners) {
-            Vertex v = new Vertex(c[0], c[1], c[2]);
-            setColor(v, boxColor);
-            verts.add(v);
+        if (side == 0) {
+            verts.add(new Vertex(minX, y01 + bottomOffset, maxZ)); // Bot-Left
+            verts.add(new Vertex(minX, y00 + bottomOffset, minZ)); // Bot-Right
+            verts.add(new Vertex(minX, y00 + topOffset, minZ));    // Top-Right
+            verts.add(new Vertex(minX, y01 + topOffset, maxZ));    // Top-Left
+        } else if (side == 1) {
+            verts.add(new Vertex(maxX, y10 + bottomOffset, minZ)); // Bot-Left
+            verts.add(new Vertex(maxX, y11 + bottomOffset, maxZ)); // Bot-Right
+            verts.add(new Vertex(maxX, y11 + topOffset, maxZ));    // Top-Right
+            verts.add(new Vertex(maxX, y10 + topOffset, minZ));    // Top-Left
+        } else if (side == 2) {
+            verts.add(new Vertex(minX, y00 + bottomOffset, minZ)); // Bot-Left
+            verts.add(new Vertex(maxX, y10 + bottomOffset, minZ)); // Bot-Right
+            verts.add(new Vertex(maxX, y10 + topOffset, minZ));    // Top-Right
+            verts.add(new Vertex(minX, y00 + topOffset, minZ));    // Top-Left
+        } else if (side == 3) {
+            verts.add(new Vertex(maxX, y11 + bottomOffset, maxZ)); // Bot-Left
+            verts.add(new Vertex(minX, y01 + bottomOffset, maxZ)); // Bot-Right
+            verts.add(new Vertex(minX, y01 + topOffset, maxZ));    // Top-Right
+            verts.add(new Vertex(maxX, y11 + topOffset, maxZ));    // Top-Left
         }
-
-        int[][] faceIdx = {
-                { 0, 3, 2, 1 }, { 4, 7, 6, 5 },
-                { 0, 1, 5, 4 }, { 1, 2, 6, 5 },
-                { 2, 3, 7, 6 }, { 3, 0, 4, 7 }
-        };
-        for (int[] f : faceIdx) {
-            addQuad(idx + f[0], idx + f[1], idx + f[2], idx + f[3], boxColor, faces);
-        }
+        for (int i = 0; i < 4; i++) setColor(verts.get(idx + i), c);
+        
+        int[] f = { 0, 3, 2, 1 }; // CCW
+        
+        Data.Edge e1 = new Data.Edge(idx + f[0], idx + f[1]);
+        Data.Edge e2 = new Data.Edge(idx + f[1], idx + f[2]);
+        Data.Edge e3 = new Data.Edge(idx + f[2], idx + f[3]);
+        Data.Edge e4 = new Data.Edge(idx + f[3], idx + f[0]);
+        faces.add(new Data.Face(new Data.Edge[] { e1, e2, e3, e4 }, c));
     }
-
-    private void addQuad(int a, int b, int c, int d, Color faceColor, List<Data.Face> faces) {
-        Data.Edge e1 = new Data.Edge(a, b);
-        Data.Edge e2 = new Data.Edge(b, c);
-        Data.Edge e3 = new Data.Edge(c, d);
-        Data.Edge e4 = new Data.Edge(d, a);
-        faces.add(new Data.Face(new Data.Edge[] { e1, e2, e3, e4 }, faceColor));
-    }
-
     private static void setColor(Vertex v, Color c) {
         v.r = c.getRed();
         v.g = c.getGreen();

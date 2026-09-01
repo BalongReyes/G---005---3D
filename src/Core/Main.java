@@ -68,15 +68,27 @@ public class Main {
 
     public java.util.List<int[]> surfaceGridCells = new java.util.ArrayList<>();
 
+    public java.util.List<Data.Object3D> terrainChunks = new java.util.ArrayList<>();
+
     public void updateTerrainMesh(double isoLevel) {
         this.isoLevel = isoLevel;
         if (scalarField == null || objectHandler == null)
             return;
 
-        objectHandler.getObjects().clear();
+        for (Data.Object3D chunk : terrainChunks) {
+            objectHandler.getObjects().remove(chunk);
+        }
+        terrainChunks.clear();
 
-        java.util.List<Data.Object3D> meshChunks = Core.World.TerrainGenerator.generateMesh(scalarField, isoLevel);
-        for (Data.Object3D chunk : meshChunks) {
+        if (waterObject != null) {
+            objectHandler.getObjects().remove(waterObject);
+        }
+        if (wfcPlaceholders != null) {
+            objectHandler.getObjects().remove(wfcPlaceholders);
+        }
+
+        terrainChunks = Core.World.TerrainGenerator.generateMesh(scalarField, isoLevel);
+        for (Data.Object3D chunk : terrainChunks) {
             objectHandler.addObject(chunk);
         }
 

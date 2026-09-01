@@ -88,25 +88,41 @@ public class WFCGenerator {
         modules.add(new Objects.WFC.FlowerModule());
         modules.add(new Objects.WFC.CoralModule());
 
-        int[] shapes = { 0b1010, 0b0101, 0b1100, 0b1001, 0b0110, 0b0011, 0b0001, 0b0010, 0b0100, 0b1000 };
-        for (int mask : shapes) {
-            modules.add(new Objects.WFC.RoadModule(mask));
+        roadNetwork = new RoadNetwork();
+
+        for (int mask = 1; mask <= 15; mask++) {
+            modules.add(new Objects.WFC.RoadModule(mask, roadNetwork));
+            modules.add(new Objects.WFC.BridgeModule(mask, roadNetwork));
         }
-        modules.add(new Objects.WFC.BridgeModule(0b1010)); // straight X
-        modules.add(new Objects.WFC.BridgeModule(0b0101)); // straight Z
 
         java.util.Map<Long, Integer> globalHeightMap = buildGlobalHeightMap();
         double spacing = Settings.WorldSettings.SPACING;
         double startY = -((scalarField.sizeY - 1) * spacing) / 2.0;
         int waterLevelGridY = (int) Math.round((Settings.WorldSettings.WATER_LEVEL - startY) / spacing);
 
-        roadNetwork = new RoadNetwork();
         // Arbitrary test points that are within bounds
         int startGx = 5;
         int startGz = 5;
         int endGx = Math.max(5, scalarField.sizeX - 6);
         int endGz = Math.max(5, scalarField.sizeZ - 6);
         roadNetwork.planPath(globalHeightMap, startGx, startGz, endGx, endGz, waterLevelGridY);
+
+        // Pre-process terrain for roads to carve out slopes/trenches BEFORE WFC locks heights
+        boolean preModified = false;
+        for (int gx = 1; gx < scalarField.sizeX - 1; gx++) {
+            for (int gz = 1; gz < scalarField.sizeZ - 1; gz++) {
+                if (roadNetwork.isRoad(gx, gz) && !roadNetwork.isBridge(gx, gz)) {
+                    int roadGy = (int) Math.round(roadNetwork.getRoadHeight(gx, gz));
+                    Core.World.TerrainGenerator.modifyTerrain(scalarField, gx, roadGy, gz, 1, 3);
+                    preModified = true;
+                }
+            }
+        }
+        
+        if (preModified) {
+            main.updateTerrainMesh(main.isoLevel);
+            globalHeightMap = buildGlobalHeightMap(); // Refresh to prevent floating trees
+        }
 
         // Pad by 1 to never build anything directly on the world edge!
         offsetX = 1;
@@ -141,7 +157,7 @@ public class WFCGenerator {
         }
 
         // Do multiple steps per tick to speed up the animation
-        int stepsPerTick = 50;
+        int stepsPerTick = 100;
         int status = 0;
         for (int i = 0; i < stepsPerTick; i++) {
             status = grid.step();
@@ -159,8 +175,10 @@ public class WFCGenerator {
                 // Success: leave the finished preview mesh in the renderer
                 // permanently and stop tracking it, so the next chunk starts fresh.
                 boolean modified = applyModifiersToTerrain();
-                if (modified)
+                if (modified) {
                     globalTerrainModified = true;
+                    main.updateTerrainMesh(main.isoLevel);
+                }
                 chunkPlaceholderObject = null;
 
                 chunkRetries = 0;
@@ -323,9 +341,9 @@ public class WFCGenerator {
                 boolean isRoadColumnOnly = !isBridgeColumn && roadNetwork.isRoad(gx, gz);
                 int stampY = -1;
                 if (isBridgeColumn) {
-                    stampY = roadNetwork.getBridgeDeckHeight(gx, gz) - offsetY;
+                    stampY = (int) Math.round(roadNetwork.getBridgeDeckHeight(gx, gz)) - offsetY;
                 } else if (isRoadColumnOnly) {
-                    stampY = roadNetwork.getRoadHeight(gx, gz) - offsetY;
+                    stampY = (int) Math.round(roadNetwork.getRoadHeight(gx, gz)) - offsetY;
                 }
 
                 for (int y = 0; y < currentSizeY; y++) {
